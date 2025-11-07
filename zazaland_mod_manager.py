@@ -2,16 +2,96 @@ import os
 import shutil
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+import json
+import webbrowser
+
+# --- Configuración y persistencia ---
+
+def get_config_dir():
+    """Obtiene el directorio de configuración en AppData."""
+    appdata = os.getenv('APPDATA')
+    config_dir = os.path.join(appdata, "MinecraftModManager")
+    
+    # Crear directorio si no existe
+    if not os.path.exists(config_dir):
+        os.makedirs(config_dir)
+    
+    return config_dir
+
+def get_config_path():
+    """Obtiene la ruta completa del archivo de configuración."""
+    return os.path.join(get_config_dir(), "config.json")
+
+def cargar_configuracion():
+    """Carga la configuración desde el archivo JSON."""
+    config_default = {
+        "curseforge_client_origen": r"C:\Users\marco\curseforge\minecraft\Instances\zazaland client",
+        "curseforge_client_destino": r"C:\Juegos\Minecraft\Instalaciones\Zazaland",
+        "curseforge_server_origen": r"C:\Users\marco\curseforge\minecraft\Instances\zazaland",
+        "curseforge_server_destino": r"C:\Mis servers minecraft\Zazaland"
+    }
+    
+    config_path = get_config_path()
+    
+    try:
+        if os.path.exists(config_path):
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                # Asegurarse de que todas las claves existan
+                for key, value in config_default.items():
+                    if key not in config:
+                        config[key] = value
+                return config
+    except Exception as e:
+        print(f"Error cargando configuración: {e}")
+    
+    return config_default
+
+def guardar_configuracion(config):
+    """Guarda la configuración en el archivo JSON."""
+    try:
+        config_path = get_config_path()
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=4, ensure_ascii=False)
+    except Exception as e:
+        messagebox.showerror("Error", f"No se pudo guardar la configuración:\n{e}")
 
 # --- Utilidades de interfaz ---
 
-def seleccionar_ruta_ventana(titulo, ruta_predeterminada):
-    """Abre una ventana con campo de texto y botón para elegir carpeta."""
-    ventana = tk.Toplevel()
+def centrar_ventana(ventana, ancho=None, alto=None):
+    """Centra la ventana en la pantalla."""
+    if ancho is None:
+        ancho = ventana.winfo_reqwidth()
+    if alto is None:
+        alto = ventana.winfo_reqheight()
+    
+    x = (ventana.winfo_screenwidth() // 2) - (ancho // 2)
+    y = (ventana.winfo_screenheight() // 2) - (alto // 2)
+    
+    ventana.geometry(f'{ancho}x{alto}+{x}+{y}')
+
+def crear_ventana_centrada(parent, titulo, ancho, alto):
+    """Crea una ventana ya centrada para evitar parpadeo visual."""
+    ventana = tk.Toplevel(parent)
     ventana.title(titulo)
-    ventana.geometry("500x160")
+    ventana.geometry(f"{ancho}x{alto}")
     ventana.resizable(False, False)
+    
+    # Centrar inmediatamente después de crear
+    centrar_ventana(ventana, ancho, alto)
+    
+    # Hacerla modal
+    ventana.transient(parent)
     ventana.grab_set()
+    
+    # Esperar a que se muestre
+    ventana.update_idletasks()
+    
+    return ventana
+
+def seleccionar_ruta_ventana(titulo, ruta_predeterminada, actualizar_config=None, config_key=None):
+    """Abre una ventana con campo de texto y botón para elegir carpeta."""
+    ventana = crear_ventana_centrada(root, titulo, 500, 160)
     
     # Variable para controlar si se canceló
     resultado = {"ruta": None, "cancelado": False}
@@ -32,7 +112,14 @@ def seleccionar_ruta_ventana(titulo, ruta_predeterminada):
     ttk.Button(frame, text="📁 Buscar...", command=buscar).pack(side="left")
 
     def aceptar():
-        resultado["ruta"] = ruta_var.get()
+        nueva_ruta = ruta_var.get()
+        resultado["ruta"] = nueva_ruta
+        
+        # Actualizar configuración si se proporcionó la clave
+        if actualizar_config and config_key and nueva_ruta:
+            actualizar_config[config_key] = nueva_ruta
+            guardar_configuracion(actualizar_config)
+            
         ventana.destroy()
 
     def cancelar():
@@ -57,6 +144,9 @@ def seleccionar_ruta_ventana(titulo, ruta_predeterminada):
     # Manejar cierre con la X
     ventana.protocol("WM_DELETE_WINDOW", cancelar)
 
+    # Enfocar la ventana
+    ventana.focus_set()
+    
     ventana.wait_window()
     
     # Retornar None si se canceló
@@ -64,6 +154,9 @@ def seleccionar_ruta_ventana(titulo, ruta_predeterminada):
         return None
     return resultado["ruta"]
 
+def abrir_web():
+    """Abre la página web en el navegador predeterminado."""
+    webbrowser.open("https://makro17.github.io")
 
 # --- Lógica de copia ---
 
@@ -78,6 +171,18 @@ def copiar_mods(origen, destino):
             f"No se encontró la carpeta 'mods' en:\n{origen_mods}\n\n"
             "Asegúrate de seleccionar la carpeta que CONTIENE 'mods'."
         )
+        return
+
+    # Confirmación antes de proceder
+    confirmar = messagebox.askyesno(
+        "Confirmar",
+        f"Se eliminará la carpeta 'mods' en destino y se copiará la nueva.\n\n"
+        f"Origen: {origen_mods}\n"
+        f"Destino: {destino_mods}\n\n"
+        f"¿Continuar?"
+    )
+    
+    if not confirmar:
         return
 
     # Eliminar carpeta mods destino si existe
@@ -98,41 +203,68 @@ def copiar_mods(origen, destino):
 # --- Opciones principales ---
 
 def opcion_curseforge_client():
-    origen_default = r"C:\Users\marco\curseforge\minecraft\Instances\zazaland client"
-    destino_default = r"C:\Juegos\Minecraft\Instalaciones\Zazaland"
-
-    origen = seleccionar_ruta_ventana("Selecciona la carpeta de la instancia del CLIENT", origen_default)
+    config = cargar_configuracion()
+    
+    origen = seleccionar_ruta_ventana(
+        "Selecciona la carpeta de la instancia del CLIENT", 
+        config["curseforge_client_origen"],
+        config,
+        "curseforge_client_origen"
+    )
     if origen is None:  # Si se canceló
         return
     
-    destino = seleccionar_ruta_ventana("Selecciona la carpeta destino del CLIENT", destino_default)
+    destino = seleccionar_ruta_ventana(
+        "Selecciona la carpeta destino del CLIENT", 
+        config["curseforge_client_destino"],
+        config,
+        "curseforge_client_destino"
+    )
     if destino is None:  # Si se canceló
         return
         
     copiar_mods(origen, destino)
 
 def opcion_curseforge_server():
-    origen_default = r"C:\Users\marco\curseforge\minecraft\Instances\zazaland"
-    destino_default = r"C:\Mis servers minecraft\Zazaland"
-
-    origen = seleccionar_ruta_ventana("Selecciona la carpeta de la instancia del SERVER", origen_default)
+    config = cargar_configuracion()
+    
+    origen = seleccionar_ruta_ventana(
+        "Selecciona la carpeta de la instancia del SERVER", 
+        config["curseforge_server_origen"],
+        config,
+        "curseforge_server_origen"
+    )
     if origen is None:  # Si se canceló
         return
     
-    destino = seleccionar_ruta_ventana("Selecciona la carpeta destino del SERVER", destino_default)
+    destino = seleccionar_ruta_ventana(
+        "Selecciona la carpeta destino del SERVER", 
+        config["curseforge_server_destino"],
+        config,
+        "curseforge_server_destino"
+    )
     if destino is None:  # Si se canceló
         return
         
     copiar_mods(origen, destino)
 
 def opcion_minecraft():
-    origen = seleccionar_ruta_ventana("Selecciona la carpeta que CONTIENE la carpeta 'mods' que deseas copiar", "")
+    # Para la opción Minecraft, no guardamos la ruta de origen predeterminada
+    origen = seleccionar_ruta_ventana(
+        "Selecciona la carpeta que CONTIENE la carpeta 'mods' que deseas copiar", 
+        ""
+    )
     if origen is None:  # Si se canceló
         return
 
     user = os.getenv("USERNAME")
     destino_default = fr"C:\Users\{user}\AppData\Roaming\.minecraft"
-    destino = seleccionar_ruta_ventana("Selecciona la carpeta destino (.minecraft)", destino_default)
+    
+    # Para el destino de Minecraft, podríamos guardarlo si quieres, pero según tu requerimiento no
+    destino = seleccionar_ruta_ventana(
+        "Selecciona la carpeta destino (.minecraft)", 
+        destino_default
+    )
     if destino is None:  # Si se canceló
         return
         
@@ -143,15 +275,29 @@ def opcion_minecraft():
 
 root = tk.Tk()
 root.title("minecraft mod manager")
-root.geometry("400x280")
+root.geometry("400x320")  # Aumentado para el nuevo botón
 root.resizable(False, False)
 
+# Centrar ventana principal inmediatamente
+root.withdraw()  # Ocultar temporalmente para evitar parpadeo
+root.update()
+centrar_ventana(root, 400, 320)
+root.deiconify()  # Mostrar ya centrada
+
+# Contenido de la interfaz
 tk.Label(root, text="minecraft mod manager", font=("Segoe UI", 14, "bold")).pack(pady=15)
 
 ttk.Button(root, text="curseforge client", command=opcion_curseforge_client, width=30).pack(pady=6)
 ttk.Button(root, text="curseforge server", command=opcion_curseforge_server, width=30).pack(pady=6)
 ttk.Button(root, text="minecraft", command=opcion_minecraft, width=30).pack(pady=6)
 
-tk.Label(root, text="© 2025 makro", font=("Segoe UI", 8)).pack(side="bottom", pady=10)
+# Botón para abrir la web
+ttk.Button(root, text="🌐 Abrir Web", command=abrir_web, width=30).pack(pady=10)
+
+# Frame para el footer
+footer_frame = tk.Frame(root)
+footer_frame.pack(side="bottom", fill="x", pady=10)
+
+tk.Label(footer_frame, text="© 2025 makro", font=("Segoe UI", 8)).pack()
 
 root.mainloop()
